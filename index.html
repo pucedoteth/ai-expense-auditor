@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Expense Auditor · Ritual</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.13.4/ethers.umd.min.js"></script>
+<style>
+  :root{--bg:#0d0f0e;--panel:#161a18;--line:#2a302d;--text:#e8ece9;--muted:#98a29c;--accent:#3ddc97;--warn:#ffb547;--bad:#ff6b6b;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+  main{max-width:880px;margin:0 auto;padding:28px 16px 60px}
+  h1{font-size:26px;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 24px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+  .card h2{font-size:15px;margin:0 0 12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  input,select,textarea{width:100%;background:#0f1211;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit}
+  textarea{min-height:80px;resize:vertical}
+  button{background:var(--accent);color:#06140d;border:0;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;font:inherit;font-weight:600}
+  button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;word-break:break-all}
+  .muted{color:var(--muted)}
+  .status{margin-top:12px;padding:10px;border-radius:8px;background:#0f1211;border:1px solid var(--line);display:none;white-space:pre-wrap}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:top;font-size:14px}
+  th{color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase}
+  .pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;font-weight:600}
+  .p1{background:rgba(61,220,151,.15);color:var(--accent)}
+  .p2{background:rgba(255,107,107,.15);color:var(--bad)}
+  .p0,.p3{background:rgba(255,181,71,.15);color:var(--warn)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media(max-width:600px){.grid2{grid-template-columns:1fr}td:nth-child(5),th:nth-child(5){display:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>AI Expense Auditor</h1>
+  <p class="sub">Submit a business expense. Ritual's on-chain AI reviews it for forensic-accounting red flags, and the verdict is saved to a public audit log.</p>
+
+  <div class="card">
+    <h2>1 · Wallet</h2>
+    <div class="row">
+      <button id="connectBtn">Connect MetaMask</button>
+      <span id="account" class="mono muted">Not connected</span>
+    </div>
+    <label>Contract address</label>
+    <input id="contractInput" class="mono" placeholder="0x… (your deployed ExpenseAuditor)">
+    <p class="muted" style="margin:10px 0 0">Wallet: <span id="bal">–</span> RITUAL · Fee deposit (RitualWallet): <span id="dep">–</span> RITUAL</p>
+    <div class="row" style="margin-top:10px">
+      <button id="depositBtn" class="ghost" disabled>Deposit 0.5 RITUAL for AI fees</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>2 · Submit an expense</h2>
+    <div class="grid2">
+      <div><label>Amount (USD)</label><input id="amount" type="number" min="0.01" step="0.01" placeholder="e.g. 1250.00"></div>
+      <div><label>Category</label>
+        <select id="category">
+          <option>Travel</option><option>Meals &amp; Entertainment</option><option>Office Supplies</option>
+          <option>Software</option><option>Consulting Fees</option><option>Equipment</option><option>Other</option>
+        </select></div>
+    </div>
+    <label>Description (business purpose)</label>
+    <textarea id="desc" maxlength="500" placeholder="e.g. Dinner with client from Tripoli Bank to discuss audit engagement, 4 people"></textarea>
+    <div class="row" style="margin-top:12px"><button id="submitBtn" disabled>Audit with AI</button></div>
+    <div id="status" class="status"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">3 · Public audit log</h2><button id="refreshBtn" class="ghost">Refresh</button></div>
+    <table><thead><tr><th>#</th><th>Amount</th><th>Category</th><th>Verdict</th><th>AI reasoning</th></tr></thead>
+    <tbody id="log"><tr><td colspan="5" class="muted">Connect your wallet to load the log.</td></tr></tbody></table>
+  </div>
+
+  <p class="muted" style="font-size:13px">Runs on Ritual testnet (chain 1979). Test tokens only — no real value.</p>
+</main>
+
+<script>
+const { ethers } = window;
+const CHAIN_ID = 1979;
+const CHAIN_PARAMS = {
+  chainId: '0x7bb', chainName: 'Ritual Testnet',
+  nativeCurrency: { name: 'RITUAL', symbol: 'RITUAL', decimals: 18 },
+  rpcUrls: ['https://rpc.ritualfoundation.org'],
+  blockExplorerUrls: ['https://explorer.ritualfoundation.org'],
+};
+const RITUAL_WALLET = '0x532F0dF0896F353d8C3DD8cc134e8129DA2a3948';
+const TEE_REGISTRY = '0x9644e8562cE0Fe12b4deeC4163c064A8862Bf47F';
+const CAPABILITY_LLM = 1;
+
+const AUDITOR_ABI = [
+  'function submitExpense(address executor,uint256 amountCents,string category,string description) returns (uint256)',
+  'function expenseCount() view returns (uint256)',
+  'function getExpense(uint256 id) view returns (tuple(address submitter,uint256 amountCents,string category,string description,uint64 timestamp,uint8 status,string aiAnswer))',
+  'event ExpenseAudited(uint256 indexed id,address indexed submitter,uint8 status,string aiAnswer)',
+];
+const WALLET_ABI = ['function deposit(uint256 lockDuration) payable', 'function balanceOf(address) view returns (uint256)'];
+const REGISTRY_ABI = ['function getServicesByCapability(uint8 capability,bool checkValidity) view returns (tuple(tuple(address paymentAddress,address teeAddress,uint8 teeType,bytes publicKey,string endpoint,bytes32 certPubKeyHash,uint8 capability) node,bool isValid,bytes32 workloadId)[])'];
+const LABELS = { 0: ['Unclear', 'p0'], 1: ['Normal', 'p1'], 2: ['Suspicious', 'p2'], 3: ['AI error', 'p3'] };
+
+let provider, signer, me;
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function say(msg) { const el = $('status'); el.style.display = 'block'; el.textContent = msg; }
+
+// Contract address: ?c=0x… in the URL, else the last one typed (remembered in this browser).
+(function initAddress() {
+  const fromUrl = new URLSearchParams(location.search).get('c');
+  let saved = null; try { saved = localStorage.getItem('auditorAddr'); } catch (e) {}
+  $('contractInput').value = fromUrl || saved || '';
+  $('contractInput').addEventListener('change', () => {
+    try { localStorage.setItem('auditorAddr', $('contractInput').value.trim()); } catch (e) {}
+    loadLog();
+  });
+})();
+function auditorAddr() {
+  const a = $('contractInput').value.trim();
+  if (!ethers.isAddress(a)) throw new Error('Paste your deployed contract address in step 1 first.');
+  return a;
+}
+
+async function ensureChain() {
+  try {
+    await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_PARAMS.chainId }] });
+  } catch (e) {
+    if (e.code === 4902 || /Unrecognized|not been added/i.test(e.message || '')) {
+      await window.ethereum.request({ method: 'wallet_addEthereumChain', params: [CHAIN_PARAMS] });
+    } else throw e;
+  }
+}
+
+async function connect() {
+  if (!window.ethereum) { alert('MetaMask not found. Install it from metamask.io, then reload.'); return; }
+  await window.ethereum.request({ method: 'eth_requestAccounts' });
+  await ensureChain();
+  provider = new ethers.BrowserProvider(window.ethereum);
+  signer = await provider.getSigner();
+  me = await signer.getAddress();
+  $('account').textContent = me;
+  $('connectBtn').textContent = 'Connected';
+  $('depositBtn').disabled = false; $('submitBtn').disabled = false;
+  await refreshBalances(); await loadLog();
+}
+
+async function refreshBalances() {
+  if (!provider) return;
+  const w = new ethers.Contract(RITUAL_WALLET, WALLET_ABI, provider);
+  const [bal, dep] = await Promise.all([provider.getBalance(me), w.balanceOf(me)]);
+  $('bal').textContent = Number(ethers.formatEther(bal)).toFixed(4);
+  $('dep').textContent = Number(ethers.formatEther(dep)).toFixed(4);
+}
+
+async function deposit() {
+  try {
+    say('Confirm the deposit in MetaMask…');
+    const w = new ethers.Contract(RITUAL_WALLET, WALLET_ABI, signer);
+    const tx = await w.deposit(5000n, { value: ethers.parseEther('0.5') });
+    say('Deposit sent, waiting for confirmation…\n' + tx.hash);
+    await tx.wait();
+    say('Deposit confirmed. You can now submit expenses.');
+    refreshBalances();
+  } catch (e) { say('Deposit failed: ' + (e.shortMessage || e.message)); }
+}
+
+async function pickExecutor() {
+  const reg = new ethers.Contract(TEE_REGISTRY, REGISTRY_ABI, provider);
+  const services = await reg.getServicesByCapability(CAPABILITY_LLM, true);
+  const valid = services.filter(s => s.isValid);
+  if (!valid.length) throw new Error('No AI executor is online right now. Try again in a few minutes.');
+  return valid[Math.floor(Math.random() * valid.length)].node.teeAddress;
+}
+
+async function submit() {
+  const btn = $('submitBtn');
+  try {
+    const addr = auditorAddr();
+    const amount = parseFloat($('amount').value);
+    const desc = $('desc').value.trim();
+    if (!(amount > 0)) throw new Error('Enter an amount.');
+    if (!desc) throw new Error('Enter a description.');
+    const cents = BigInt(Math.round(amount * 100));
+    btn.disabled = true;
+
+    const dep = await new ethers.Contract(RITUAL_WALLET, WALLET_ABI, provider).balanceOf(me);
+    if (dep < ethers.parseEther('0.35')) throw new Error('Your AI fee deposit is too low. Click "Deposit 0.5 RITUAL" first.');
+
+    say('Finding an AI executor…');
+    const executor = await pickExecutor();
+
+    // Async precompiles can't be simulated, so send the raw tx with a fixed gas limit
+    // instead of letting the wallet estimate it.
+    const iface = new ethers.Interface(AUDITOR_ABI);
+    const data = iface.encodeFunctionData('submitExpense', [executor, cents, $('category').value, desc]);
+    say('Confirm in MetaMask… (if MetaMask warns the transaction may fail, that is expected for Ritual AI calls — you can proceed)');
+    const tx = await signer.sendTransaction({ to: addr, data, gasLimit: 3_000_000n });
+    say('Sent. The AI is reviewing your expense (usually 10–40 seconds)…\n' + tx.hash);
+    const rcpt = await tx.wait();
+
+    const ev = rcpt.logs.map(l => { try { return iface.parseLog(l); } catch { return null; } }).find(x => x && x.name === 'ExpenseAudited');
+    if (ev) {
+      const [label] = LABELS[Number(ev.args.status)] || ['?'];
+      say(`Expense #${ev.args.id} audited → ${label}\n\n${ev.args.aiAnswer.trim()}`);
+    } else {
+      say('Transaction confirmed. Refreshing the audit log…');
+    }
+    await loadLog(); refreshBalances();
+  } catch (e) {
+    say('Error: ' + (e.shortMessage || e.reason || e.message));
+  } finally { btn.disabled = false; }
+}
+
+async function loadLog() {
+  if (!provider) return;
+  let addr; try { addr = auditorAddr(); } catch { return; }
+  const c = new ethers.Contract(addr, AUDITOR_ABI, provider);
+  try {
+    const n = Number(await c.expenseCount());
+    if (!n) { $('log').innerHTML = '<tr><td colspan="5" class="muted">No expenses yet — submit the first one.</td></tr>'; return; }
+    const ids = []; for (let i = n - 1; i >= Math.max(0, n - 25); i--) ids.push(i);
+    const rows = await Promise.all(ids.map(i => c.getExpense(i)));
+    $('log').innerHTML = rows.map((e, k) => {
+      const [label, cls] = LABELS[Number(e.status)] || ['?', 'p0'];
+      const amt = (Number(e.amountCents) / 100).toLocaleString(undefined, { minimumFractionDigits: 2 });
+      return `<tr><td>${ids[k]}</td><td>$${amt}</td><td>${esc(e.category)}<div class="muted" style="font-size:12px">${esc(e.description)}</div></td>
+        <td><span class="pill ${cls}">${label}</span></td><td class="muted">${esc(e.aiAnswer.trim())}</td></tr>`;
+    }).join('');
+  } catch (e) {
+    $('log').innerHTML = `<tr><td colspan="5" class="muted">Could not read the contract: ${esc(e.shortMessage || e.message)}</td></tr>`;
+  }
+}
+
+$('connectBtn').onclick = () => connect().catch(e => alert(e.message));
+$('depositBtn').onclick = deposit;
+$('submitBtn').onclick = submit;
+$('refreshBtn').onclick = () => { loadLog(); refreshBalances(); };
+if (window.ethereum) window.ethereum.on?.('accountsChanged', () => location.reload());
+</script>
+</body>
+</html>
