@@ -36,3 +36,14 @@ You can share a link that already includes the contract address: `https://<you>.
 - The site sends the transaction with a fixed gas limit, because async precompiles can't be simulated.
 
 Built with the [Ritual dApp Skills](https://skills.ritualfoundation.org/) reference.
+
+## Tests
+
+The tests use [Foundry](https://getfoundry.sh). The LLM precompile is mocked, so they run without a chain:
+
+```bash
+forge install foundry-rs/forge-std --no-git
+forge test
+```
+
+`test/ExpenseAuditor.t.sol` covers the **empty path**: no result, an empty output (late), `hasError` (expired or executor error), zero choices, and a blank answer after `</think>`. Each one is saved as **AI error** and never as a verdict. It also covers the Normal, Suspicious and Unclear verdicts and a failed precompile call.

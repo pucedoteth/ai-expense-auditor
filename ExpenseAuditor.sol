@@ -201,6 +201,8 @@ contract ExpenseAuditor {
 
         string memory content = _extractContent(completionData);
         bytes memory finalText = _afterLast(bytes(content), bytes("</think>"));
+        // Empty path: no choices, or only reasoning / whitespace came back.
+        if (_isBlank(finalText)) return (STATUS_AI_ERROR, "empty answer");
         answer = string(finalText);
         status = _verdict(finalText);
     }
@@ -243,6 +245,14 @@ contract ExpenseAuditor {
         bytes memory out = new bytes(text.length - start);
         for (uint256 j = 0; j < out.length; j++) out[j] = text[start + j];
         return out;
+    }
+
+    function _isBlank(bytes memory s) internal pure returns (bool) {
+        for (uint256 i = 0; i < s.length; i++) {
+            bytes1 c = s[i];
+            if (c != " " && c != "\n" && c != "\r" && c != "\t") return false;
+        }
+        return true;
     }
 
     function _startsWith(bytes memory text, uint256 at, string memory word) internal pure returns (bool) {
