@@ -7,3 +7,5 @@ skip = ["lib/**"]
 solc_version = "0.8.24"
 optimizer = true
 optimizer_runs = 200
+# Ritual Office Hours check 3: Ritual requests carry many fields; via_ir avoids "Stack too deep".
+via_ir = true
